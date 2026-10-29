@@ -3,10 +3,13 @@
 // 필요한 환경변수:
 //   KRX_API_KEY : KRX Open API 인증키
 //   MCP_SECRET  : 접속 주소에 들어가는 비밀 문자열 (주소: /mcp/<MCP_SECRET>)
+//   DART_API_KEY: (선택) OpenDART 인증키 — 있으면 DART 공시·재무 도구가 추가됩니다
 import http from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+// 원본 korea-stock-mcp(1.4.1)의 DART 기능을 그대로 가져와 씁니다.
+import * as dart from "korea-stock-mcp/dist/dart/index.js";
 
 const KRX_API_KEY = process.env.KRX_API_KEY;
 const MCP_SECRET = process.env.MCP_SECRET;
@@ -63,7 +66,7 @@ const asText = (obj) => ({
 });
 
 function buildServer() {
-  const server = new McpServer({ name: "krx-web-mcp", version: "1.0.0" });
+  const server = new McpServer({ name: "korea-stock-web-mcp", version: "1.1.0" });
 
   server.tool(
     "get_today_date",
@@ -162,6 +165,38 @@ function buildServer() {
         await multiDay(INDEXES[series], basDdList, nameFilter ? (r) => (r.IDX_NM || "").includes(nameFilter) : null)
       )
   );
+
+  // ---- DART (DART_API_KEY가 있을 때만 등록) ----
+  if (process.env.DART_API_KEY) {
+    const dartTool = (name, desc, schema, fn) =>
+      server.tool(name, desc, schema.shape, async (params) => asText(await fn(schema.parse(params))));
+
+    dartTool(
+      "get_corp_code",
+      "DART 고유번호: 공시대상회사의 고유번호(corp_code), 회사명, 종목코드를 조회합니다. 회사명(corp_name, 부분 일치) 또는 종목코드(stock_code)로 검색. 비상장법인도 조회 가능.",
+      dart.getCorpCodeSchema, dart.getCorpCode
+    );
+    dartTool(
+      "get_disclosure_list",
+      "DART 공시검색: 공시 유형별·회사별·날짜별로 공시보고서를 검색합니다. 최근 공시를 찾을 때는 bgn_de를 반드시 지정하세요.",
+      dart.getDisclosureListSchema, dart.getDisclosureList
+    );
+    dartTool(
+      "get_disclosure",
+      "DART 공시보고서 원문을 파싱해 가져옵니다. 문서가 1MB를 넘으면 목차(type: toc)를 반환하니, 질문과 관련된 섹션을 section_id로 다시 조회하세요.",
+      dart.getDisclosureSchema, dart.getDisclosure
+    );
+    dartTool(
+      "get_financial_statement",
+      "DART 재무제표: 상장법인 및 주요 비상장법인이 제출한 정기보고서의 XBRL 재무제표 전체 계정과목(매출액, 영업이익 등)을 제공합니다.",
+      dart.getFinancialStatementSchema, dart.getFinancialStatement
+    );
+    dartTool(
+      "get_market_type",
+      "DART에 등록된 종목의 상장시장 정보: Y(유가증권), K(코스닥), N(코넥스), E(기타).",
+      dart.getMarketTypeSchema, dart.getMarketType
+    );
+  }
 
   return server;
 }
